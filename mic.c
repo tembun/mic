@@ -1,5 +1,5 @@
 /*
-	mic -- loop microphone back to speakes in FreeBSD.
+	mic -- loop microphone back to speakers in FreeBSD.
 */
 
 
