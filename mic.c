@@ -1,5 +1,14 @@
 /*
 	mic -- loop microphone back to speakers in FreeBSD.
+
+	Without any arguments specified, it'll loop you microphone
+	back to speakers with no delay.
+
+	In case you provide an arugument to that, it'll be treated
+	as a floating-point number, representing the delay for loopback.
+	Since the data obtained from /dev/dsp device is a raw sound data,
+	it takes really much space, so the maximum delay is limited to 8 seconds,
+	just not to consume lots of memory of yours.
 */
 
 
