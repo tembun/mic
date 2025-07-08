@@ -1,81 +1,75 @@
 /*
-	mic -- loop microphone back to speakers in FreeBSD.
+ * mic -- microphone feedback for FreeBSD.
+ *
+ * Without any arguments specified, it'll feed your microphone back to the
+ * speakers with no delay.
+ *
+ * In case you provide an arugument for that, it'll be treated as a floating-
+ * point number, representing the delay for loopback.  Since the data obtained
+ * from /dev/dsp device is a raw sound data, it takes a considerable space, so
+ * the maximum delay is limited to 8 seconds, just not to consume lots of memory
+ * of yours.
+ */
 
-	Without any arguments specified, it'll loop you microphone
-	back to speakers with no delay.
+#include <sys/time.h>
 
-	In case you provide an arugument to that, it'll be treated
-	as a floating-point number, representing the delay for loopback.
-	Since the data obtained from /dev/dsp device is a raw sound data,
-	it takes really much space, so the maximum delay is limited to 8 seconds,
-	just not to consume lots of memory of yours.
-*/
+#include <err.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
-
-#include<stdlib.h>
-#include<fcntl.h>
-#include<unistd.h>
-#include<sys/time.h>
-#include<string.h>
-#include<stdio.h>
-
-
-/* maximum input/output buffer size. */
+/* Maximum input/output buffer size. */
 #define MXBFSZ 4096
-/* delta for enlargning accumulator buffer. */
+/* Delta for enlargning accumulator buffer. */
 #define XPNDACC 300000
+#define MAX_DELAY 8
 
 
-/* /dev/dsp file descriptor. */
-int fd;
-/* input buffer. */
-char ibu[MXBFSZ];
-/* delay argument. */
-float dlya;
-/* actually read bytes. */
-ssize_t arb;
-/* are we in accumulating mode. */
-char accm;
-/* current accumulator index (when unloading it). */
-int acci;
-/* start time (for tracking delay). */
-struct timeval st;
+int fd; /* /dev/dsp file descriptor. */
+char ibu[MXBFSZ]; /* Input buffer. */
+float dlya; /* Delay argument. */
+ssize_t arb; /* Actually read bytes. */
+char accm; /* Are we in accumulating mode. */
+int acci; /* Current accumulator index (when unloading it). */
+struct timeval st; /* Start time (for tracking delay). */
 
-
-/* simple loop (without delay). */
+/*
+ * Simple loop (without delay).
+ */
 void
-simploop() {
-	while((arb = read(fd, &ibu, MXBFSZ)) > 0) {
+simploop()
+{
+	while((arb = read(fd, &ibu, MXBFSZ)) > 0)
 		write(fd, &ibu, arb);
-	}
 }
 
-/* check delay. */
+/*
+ * Check delay.
+ */
 void
-ckdly() {
+ckdly()
+{
 	struct timeval now;
-
-	/* diff in microseconds. */
-	unsigned long diffmc;
+	unsigned long diffmc; /* Difference in microseconds. */
 
 	gettimeofday(&now, NULL);
-	diffmc = (now.tv_sec - st.tv_sec)*1000000
-	         + (now.tv_usec - st.tv_usec);
+	diffmc = (now.tv_sec - st.tv_sec) * 1000000 + (now.tv_usec -
+	    st.tv_usec);
 
-	if (diffmc > dlya*1000000) {
+	if (diffmc > dlya * 1000000)
 		accm = 0;
-	}
 }
 
-/* buffered loop (with delay). */
+/*
+ * Buffered loop (with delay).
+ */
 void
-bufloop() {
-	/* accumulator. */
-	char* acc;
-	/* accumulator total size. */
-	int accsz;
-	/* actual length of accumulator. */
-	int accl;
+bufloop()
+{
+	char* acc; /* Accumulator. */
+	int accsz; /* Accumulator total size. */
+	int accl; /* Actual length of accumulator. */
 
 	acc = NULL;
 	accsz = 0;
@@ -85,32 +79,32 @@ bufloop() {
 
 	gettimeofday(&st, NULL);
 	while((arb = read(fd, &ibu, MXBFSZ)) > 0) {
-		if (accm) {
+		if (accm)
 			ckdly();
-		}
-
+		
+		/*
+		 * The above call to `ckdly' may change the `accm', so we need
+		 * to have two identical if-s in a row.
+		 */
 		if (accm) {
-			if (accl + arb > accsz) {
-				acc = realloc(acc, accsz += XPNDACC);
-				if (!acc) {
-					dprintf(2, "[mic]: can't realloc buffer.\n");
-					exit(1);
-				}
-			}
+			if (accl + arb > accsz)
+				if ((acc = realloc(acc, accsz += XPNDACC)) ==
+				    NULL)
+					err(1, "realloc()");
 
-			memcpy(acc+accl, &ibu, arb);
+			memcpy(acc + accl, &ibu, arb);
 			accl += arb;
 			continue;
 		}
 
-		/* at this point we want to start unloading accumulated data. */
-		acc = realloc(acc, accsz=accl);
-		if (!acc) {
-			dprintf(2, "[mic]: can not shrink accumulator.\n");
-			exit(1);
-		}
+		/*
+		 * At this point we want to start unloading accumulated data.
+		 */
+		
+		if ((acc = realloc(acc, accsz = accl)) == NULL)
+			err(1, "realloc()");
 
-		if (acci+arb <= accsz) {
+		if (acci + arb <= accsz) {
 			write(fd, acc+acci, arb);
 			memcpy(acc+acci, &ibu, arb);
 		}
@@ -125,7 +119,7 @@ bufloop() {
 			write(fd, acc, tw);
 
 			memcpy(acc+acci, &ibu, on);
-			memcpy(acc, &ibu+on, tw);
+			memcpy(acc, &ibu + on, tw);
 		}
 
 		acci = (acci + arb) % accsz;
@@ -133,31 +127,23 @@ bufloop() {
 }
 
 int
-main(int argc, char** argv) {
-	if (argc == 1) {
+main(int argc, char** argv)
+{
+	if (argc == 1)
 		dlya = 0;
-	}
-	else {
+	else
 		dlya = strtof(argv[1], NULL);
-	}
 
-	if (dlya > 8) {
-		dprintf(2, "[mic]: the delay is too big - mind your memory!\n");
-		return 1;
-	}
+	if (dlya > MAX_DELAY)
+		errx(2, "the delay is too big - mind your memory!");
 
-	fd = open("/dev/dsp", O_RDWR);
-	if (fd == -1) {
-		dprintf(2, "[mic]: can not open /dev/dsp device.\n");
-		return 1;
-	}
+	if ((fd = open("/dev/dsp", O_RDWR)) == -1)
+		err(1, "open(/dev/dsp)");
 
-	if (!dlya) {
+	if (dlya == 0)
 		simploop();
-	}
-	else {
+	else
 		bufloop();
-	}
 
 	return 0;
 }
